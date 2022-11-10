@@ -1,3 +1,7 @@
+# Adding new features
+
+* POS extraction and finetuning
+
 # Predicting Prosodic Prominence from Text with Pre-Trained Contextualized Word Representations
 
 **Update 30 October 2019:**

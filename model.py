@@ -5,35 +5,85 @@ import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
-from pytorch_transformers import BertModel
+from transformers import AutoConfig, AutoModel
+import losses
+
+
+class WeightLayerEmbeddings(nn.Module):
+    def __init__(self, num_hidden_layers):
+        super(WeightLayerEmbeddings, self).__init__()
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.weight_layers = nn.Parameter(torch.zeros((1, num_hidden_layers), device=self.device),
+                                          requires_grad=True)
+
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        weights_layer_softmax = torch.nn.functional.softmax(self.weight_layers, dim=1)
+        # import pdb; pdb.set_trace()
+        if embeddings.dim() == 3:
+            hidden_weighted = torch.einsum('ijk,zi->ijk', embeddings, weights_layer_softmax)
+            weighted_embeddings = torch.sum(hidden_weighted, dim=0).to(self.device)
+        else:
+            # (layers+1, batch, frames, dim)
+            weighted_embeddings = torch.einsum('ijfk,zi->jfk', embeddings, weights_layer_softmax)
+        return weighted_embeddings
 
 
 class Bert(nn.Module):
-    def __init__(self, device, config, labels=None):
+    def __init__(self, device, config, labels=None, freeze: bool = False):
         super().__init__()
+        self._freeze = freeze
 
         if config.model == "BertCased":
-            self.bert = BertModel.from_pretrained('bert-base-cased')
+            # self.bert = BertModel.from_pretrained('bert-base-cased')
+            # self.bert = BertModel.from_pretrained('bert-base-cased', output_hidden_states=True)
+            self.bert = AutoModel.from_pretrained("bert-base-cased", output_hidden_states=True)
         else:
-            self.bert = BertModel.from_pretrained('bert-base-uncased')
+            # self.bert = BertModel.from_pretrained('bert-base-uncased')
+            # self.bert = BertModel.from_pretrained('bert-base-uncased', output_hidden_states=True)
+            self.bert = AutoModel.from_pretrained("bert-base-uncased", output_hidden_states=True)
+            # self.bert = AutoModel.from_pretrained("roberta-base", output_hidden_states=True)
 
-        self.fc = nn.Linear(768, labels).to(device)
+        if self._freeze:
+            for param in self.bert.parameters():
+                param.requires_grad = False
+
+        # self.fc = nn.Linear(768, labels).to(device)
+        # self.device = device
+        self.weight = WeightLayerEmbeddings(num_hidden_layers=12)
+        self.fc1 = nn.Linear(768, 256).to(device)
+        self.nl1 = nn.ReLU()
+        self.fc2 = nn.Linear(256, labels).to(device)
+        self.dropout = nn.Dropout(p=0.2)
         self.device = device
+        self.classifier = losses.MarginCosineProduct(256, labels).to(device)
+        self.attention = nn.MultiheadAttention(256, num_heads=16, dropout=0.2, bias=True, batch_first=True)
 
     def forward(self, x, y):
 
         x = x.to(self.device)
         y = y.to(self.device)
 
+        # print(torch.nn.functional.softmax(self.weight.weight_layers, dim=1))
+
         if self.training:
             self.bert.train()
-            enc = self.bert(x)[0]
+            enc = torch.stack(self.bert(x)[2][1:])
+            # enc = self.bert(x)[0]
         else:
             self.bert.eval()
             with torch.no_grad():
-                enc = self.bert(x)[0]
-        logits = self.fc(enc).to(self.device)
+                # enc = self.bert(x)[0]
+                enc = torch.stack(self.bert(x)[2][1:])
+
+        enc = self.weight(enc).to(self.device)
+        enc = self.fc1(enc).to(self.device)
+        enc = self.dropout(enc).to(self.device)
+        enc = self.nl1(enc).to(self.device)
+        enc = self.attention(enc,enc,enc)[0]
+        logits = self.fc2(enc).to(self.device)
         y_hat = logits.argmax(-1)
+        # logits = self.fc(enc).to(self.device)
+        # y_hat = logits.argmax(-1)
         return logits, y, y_hat
 
 

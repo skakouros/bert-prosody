@@ -10,9 +10,10 @@ from torch.utils import data
 import torch.optim as optim
 import prosody_dataset
 from prosody_dataset import Dataset
-from prosody_dataset import load_embeddings
+from prosody_dataset import load_embeddings, add_pos_to_dataset
 from model import Bert, BertLSTM, LSTM, BertRegression, LSTMRegression, WordMajority, ClassEncodings, BertAllLayers
 from argparse import ArgumentParser
+import time
 
 parser = ArgumentParser(description='Prosody prediction')
 
@@ -109,6 +110,18 @@ parser.add_argument('--shuffle_sentences',
 parser.add_argument('--seed',
                     type=int,
                     default=1234)
+parser.add_argument('--split_dir',
+                    type=str,
+                    default='libritts/with_pos')
+parser.add_argument('--exp_name',
+                    type=str,
+                    default='test_experiment')
+parser.add_argument('--use_pos',
+                    type=bool,
+                    default=False)
+parser.add_argument('--extract_pos',
+                    type=bool,
+                    default=False)
 
 
 def make_dirs(name):
@@ -154,7 +167,7 @@ def main():
         print("GPU not available so training on CPU (torch.device({})).".format(device))
         device = 'cpu'
 
-    # Optimizer
+    # optimizer
     if config.optimizer == 'adadelta':
         optim_algorithm = optim.Adadelta
     elif config.optimizer == 'adagrad':
@@ -174,14 +187,18 @@ def main():
     else:
         raise Exception('Unknown optimization optimizer: "%s"' % config.optimizer)
 
-    splits, tag_to_index, index_to_tag, vocab = prosody_dataset.load_dataset(config)
+    # load data
+    if config.extract_pos:
+        add_pos_to_dataset(config)
+    splits, tag2index, index_to_tag, vocab, pos2index, index2pos = prosody_dataset.load_dataset(config)
 
+    # model definition
     if config.model == "BertUncased" or config.model == "BertCased":
-        model = Bert(device, config, labels=len(tag_to_index))
+        model = Bert(device, config, labels=len(tag2index)) if not config.use_pos else Bert(device, config, labels=len(pos2index))
     elif config.model == "BertLSTM":
-        model = BertLSTM(device, config, labels=len(tag_to_index))
+        model = BertLSTM(device, config, labels=len(tag2index))
     elif config.model == "LSTM" or config.model == "BiLSTM":
-        model = LSTM(device, config, vocab_size=len(vocab), labels=len(tag_to_index))
+        model = LSTM(device, config, vocab_size=len(vocab), labels=len(tag2index))
     elif config.model == "BertRegression":
         model = BertRegression(device, config)
         config.ignore_punctuation = True
@@ -191,9 +208,9 @@ def main():
     elif config.model == "WordMajority":
         model = WordMajority(device, config, index_to_tag)
     elif config.model == "ClassEncodings":
-        model = ClassEncodings(device, config, index_to_tag, tag_to_index)
+        model = ClassEncodings(device, config, index_to_tag, tag2index)
     elif config.model == "BertAllLayers":
-        model = BertAllLayers(device, config, labels=len(tag_to_index))
+        model = BertAllLayers(device, config, labels=len(tag2index))
     else:
         raise NotImplementedError("Model option not supported.")
 
@@ -206,9 +223,9 @@ def main():
     else:
         word_to_embid = None
 
-    train_dataset = Dataset(splits["train"], tag_to_index, config, word_to_embid)
-    eval_dataset = Dataset(splits["dev"], tag_to_index, config, word_to_embid)
-    test_dataset = Dataset(splits["test"], tag_to_index, config, word_to_embid)
+    train_dataset = Dataset(splits["train"], tag2index, pos2index, config, word_to_embid)
+    eval_dataset = Dataset(splits["dev"], tag2index, pos2index, config, word_to_embid)
+    test_dataset = Dataset(splits["test"], tag2index, pos2index, config, word_to_embid)
 
     train_iter = data.DataLoader(dataset=train_dataset,
                                  batch_size=config.batch_size,
@@ -229,9 +246,20 @@ def main():
     if config.model in ["WordMajority"]:
         optimizer = None
     else:
-        optimizer = optim_algorithm(model.parameters(),
-                                    lr=config.learning_rate,
-                                    weight_decay=config.weight_decay)
+        # add custom learning rate for individual layers in the model
+        layer_names = [name for (name,param) in model.named_parameters()]
+        weights_lr = 1e-2
+        target_layer = 'weight.weight_layers'
+        layer_names = list(set(layer_names)-set([target_layer]))
+        params = [{'params': [value for name, value in model.named_parameters() if name in layer_names], 'lr':config.learning_rate},\
+                  {'params': [value for name, value in model.named_parameters() if name not in layer_names], 'lr':weights_lr}]
+        # init optimizer
+        optimizer = optim_algorithm(params,
+                                     lr=config.learning_rate,
+                                     weight_decay=config.weight_decay)
+        # optimizer = optim_algorithm(model.parameters(),
+        #                             lr=config.learning_rate,
+        #                             weight_decay=config.weight_decay)
 
     if config.model in ['BertRegression', 'LSTMRegression']:
         if config.weighted_mse:
@@ -241,7 +269,8 @@ def main():
     elif config.model == 'ClassEncodings':
         criterion = nn.BCELoss()
     else:
-        criterion = nn.CrossEntropyLoss(ignore_index=0)
+        # criterion = nn.CrossEntropyLoss(ignore_index=0)
+        criterion = nn.CrossEntropyLoss(ignore_index=0, label_smoothing=0)
 
     params = sum([p.numel() for p in model.parameters()])
     print('Parameters: {}'.format(params))
@@ -257,6 +286,7 @@ def main():
     print('\nTraining started...\n')
     best_dev_acc = 0
     best_dev_epoch = 0
+    training_start_time = time.time()
 
     if config.model in ['BertRegression', 'LSTMRegression']:
         for epoch in range(config.epochs):
@@ -272,12 +302,16 @@ def main():
             valid(model, dev_iter, criterion, index_to_tag, device, config, best_dev_acc, best_dev_epoch, epoch+1)
         test(model, test_iter, criterion, index_to_tag, device, config)
 
+    # print training time
+    m, s = divmod((time.time() - training_start_time), 60)
+    print(f'Training finished! Time elapsed: {m:.1f} minutes and {s:.1f} seconds')
+
 # --------------- FUNCTIONS FOR DISCRETE MODELS --------------------
 
 def train(model, iterator, optimizer, criterion, device, config):
     model.train()
     for i, batch in enumerate(iterator):
-        words, x, is_main_piece, tags, y, seqlens, _, _ = batch
+        words, x, is_main_piece, tags, y, seqlens, _, pids, pos, _ = batch
 
         if config.model == 'WordMajority':
             model.collect_stats(x, y)
@@ -285,7 +319,8 @@ def train(model, iterator, optimizer, criterion, device, config):
 
         optimizer.zero_grad()
         x = x.to(device)
-        y = y.to(device)
+        y = pids.to(device) if config.use_pos else y.to(device)
+        import pdb;pdb.set_trace()
 
         logits, y, _ = model(x, y) # logits: (N, T, VOCAB), y: (N, T)
 
@@ -297,6 +332,8 @@ def train(model, iterator, optimizer, criterion, device, config):
             logits = logits.view(-1, logits.shape[-1]) # (N*T, VOCAB)
             y = y.view(-1)  # (N*T,)
             loss = criterion(logits.to(device), y.to(device))
+            # import pdb;pdb.set_trace()
+            # loss = criterion(logits.to(device).permute(0,2,1), y.to(device))
 
         loss.backward()
         optimizer.step()
@@ -317,9 +354,9 @@ def valid(model, iterator, criterion, index_to_tag, device, config, best_dev_acc
     Words, Is_main_piece, Tags, Y, Y_hat = [], [], [], [], []
     with torch.no_grad():
         for i, batch in enumerate(iterator):
-            words, x, is_main_piece, tags, y, seqlens, _, _ = batch
+            words, x, is_main_piece, tags, y, seqlens, _, pids, pos, _ = batch
             x = x.to(device)
-            y = y.to(device)
+            y = pids.to(device) if config.use_pos else y.to(device)
 
             logits, labels, y_hat = model(x, y)  # y_hat: (N, T)
 
@@ -391,7 +428,7 @@ def test(model, iterator, criterion, index_to_tag, device, config):
     Words, Is_main_piece, Tags, Y, Y_hat = [], [], [], [], []
     with torch.no_grad():
         for i, batch in enumerate(iterator):
-            words, x, is_main_piece, tags, y, seqlens, _, _ = batch
+            words, x, is_main_piece, tags, y, seqlens, _, pids, pos, _ = batch
             x = x.to(device)
             y = y.to(device)
 

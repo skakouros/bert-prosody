@@ -3,6 +3,12 @@ import pandas as pd
 from ast import literal_eval
 from typing import List, Tuple
 import numpy as np
+from itertools import islice
+
+
+def chunk(it, size):
+    it = iter(it)
+    return list(iter(lambda: tuple(islice(it, size)), ()))
 
 
 def split_punctuation(utterance: List[str], prominence: List[str], duration: List[str], add_eos_mark: bool = False) \
@@ -11,7 +17,7 @@ def split_punctuation(utterance: List[str], prominence: List[str], duration: Lis
     puncs = [',', '.']
     utts, proms, durs = [], [], []
     punc_checker = lambda w: [p for p in puncs if p in w]
-    prom_offset = 1  # this is the label offset for prominence tags
+    prom_offset = 0  # this is the label offset for prominence tags
 
     # iterate
     for w, p, d in zip(utterance, prominence, duration):
@@ -56,7 +62,7 @@ def convert_burnc(filename: str = None, new_suffix: str = '.txt', split: bool = 
 
     # other definitions
     f = lambda file_name, split_name: Path(file_name).with_stem(split_name).with_suffix(new_suffix)
-    split_names = ['train', 'validate', 'test']
+    split_names = ['train', 'dev', 'test']
     splits = {y: x.reset_index() for x, y in
               zip(np.split(df.sample(frac=1, random_state=seed), [int(.85 * len(df)), int(.95 * len(df))]),
                   split_names)} if split else {}
@@ -80,7 +86,8 @@ def convert_burnc(filename: str = None, new_suffix: str = '.txt', split: bool = 
                 rows_writer(fn, words, prominence, duration)
 
 
-def convert_swbdnxt(filename: str = None, new_suffix: str = '.txt', split: bool = True, seed: int = 444) -> None:
+def convert_swbdnxt(filename: str = None, new_suffix: str = '.txt', split: bool = True, split_speakers: bool = False,
+                        seed: int = 444, chunk_size: int = 10) -> None:
     # init
     np.random.seed(seed)
 
@@ -98,7 +105,7 @@ def convert_swbdnxt(filename: str = None, new_suffix: str = '.txt', split: bool 
     # other definitions
     flatten = lambda x, idx: [y for sub_x in x for y in sub_x[idx]]
     f = lambda file_name, split_name: Path(file_name).with_stem(split_name).with_suffix(new_suffix)
-    split_names = ['train', 'validate', 'test']
+    split_names = ['train', 'dev', 'test']
     splits = {y: x.reset_index() for x, y in
               zip(np.split(df.sample(frac=1, random_state=seed), [int(.85 * len(df)), int(.95 * len(df))]),
                   split_names)} if split else {}
@@ -109,19 +116,58 @@ def convert_swbdnxt(filename: str = None, new_suffix: str = '.txt', split: bool 
         with open(output_file, 'w') as fn:
             cdf = df if not split else splits[Path(output_file).stem]
             for ii in cdf.index:
-                words = literal_eval(cdf.loc[ii, 'word'])
-                prominence = literal_eval(cdf.loc[ii, 'prominence'])
-                duration = literal_eval(cdf.loc[ii, 'duration'])
-                sentences = literal_eval(cdf.loc[ii, 'sentence'])
-                speaker = cdf.loc[ii, 'SA_speaker_ID']
-                fname = Path(cdf.loc[ii, 'textgrid_path']).name
-                # update with punctuations
-                split_data = [split_punctuation(w, p, d, add_eos_mark=True) for w, p, d in
-                              zip(words, prominence, duration)]
-                words, prominence, duration = flatten(split_data, 0), flatten(split_data, 1), flatten(split_data, 2)
-                # write to file
-                header_writer(fn, fname)
-                rows_writer(fn, words, prominence, duration)
+                if split_speakers:
+                    for sid in ['SA', 'SB']:
+                        all_sentences, speaker = literal_eval(cdf.loc[ii, 'sentence']), cdf.loc[ii, f'{sid}_speaker_ID']
+                        fname = Path(cdf.loc[ii, 'textgrid_path']).name
+                        if chunk_size is None:
+                            words, prominence, duration = literal_eval(cdf.loc[ii, f'{sid}_word']), literal_eval(
+                                cdf.loc[ii, f'{sid}_accent']), literal_eval(cdf.loc[ii, f'{sid}_duration'])
+                            # update with punctuations
+                            words, prominence, duration = split_punctuation(words, prominence, duration)
+                            # write to file
+                            header_writer(fn, fname + f'.{sid}')
+                            rows_writer(fn, words, prominence, duration)
+                        else: # The chunking code below needs correction
+                            words_li, prominence_li, duration_li = \
+                                chunk(literal_eval(cdf.loc[ii, f'{sid}_word']), chunk_size), \
+                                chunk(literal_eval(cdf.loc[ii, f'{sid}_accent']), chunk_size), \
+                                chunk(literal_eval(cdf.loc[ii, f'{sid}_duration']), chunk_size)
+                            for i, (words, prominence, duration) in enumerate(
+                                    zip(words_li, prominence_li, duration_li)):
+                                # update with punctuations
+                                words, prominence, duration = split_punctuation(words, prominence, duration)
+                                # write to file
+                                header_writer(fn, fname + f'.{sid}.S{i}')
+                                rows_writer(fn, words, prominence, duration)
+
+                else:
+                    sentences, speaker = literal_eval(cdf.loc[ii, 'sentence']), cdf.loc[ii, 'SA_speaker_ID']
+                    fname = Path(cdf.loc[ii, 'textgrid_path']).name
+                    if chunk_size is None:
+                        words, prominence, duration = literal_eval(cdf.loc[ii, 'word']), literal_eval(
+                            cdf.loc[ii, 'prominence']), literal_eval(cdf.loc[ii, 'duration'])
+                        # update with punctuations
+                        split_data = [split_punctuation(w, p, d, add_eos_mark=True) for w, p, d in
+                                      zip(words, prominence, duration)]
+                        words, prominence, duration = flatten(split_data, 0), flatten(split_data, 1), flatten(
+                            split_data, 2)
+                        # write to file
+                        header_writer(fn, fname)
+                        rows_writer(fn, words, prominence, duration)
+                    else:
+                        words_li, prominence_li, duration_li = chunk(literal_eval(cdf.loc[ii, 'word']), chunk_size), \
+                                                        chunk(literal_eval(cdf.loc[ii, 'prominence']), chunk_size), \
+                                                        chunk(literal_eval(cdf.loc[ii, 'duration']), chunk_size)
+                        # update with punctuations and write to file
+                        for i, (words, prominence, duration) in enumerate(zip(words_li, prominence_li, duration_li)):
+                            split_data = [split_punctuation(w, p, d, add_eos_mark=True) for w, p, d in
+                                          zip(words, prominence, duration)]
+                            words, prominence, duration = flatten(split_data, 0), flatten(split_data, 1), flatten(
+                                split_data, 2)
+                            # write to file
+                            header_writer(fn, fname + f'.S{i}')
+                            rows_writer(fn, words, prominence, duration)
 
 
 def convert_dataset(filename: str = None) -> None:

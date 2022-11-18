@@ -1,6 +1,13 @@
-# Adding new features
+# New features
 
-* POS extraction and finetuning
+* Integration with Spacy for POS extraction
+* Fine-tuning models for POS
+* Training lightweight classifiers with frozen pre-trained LMs
+* Layer weighting
+* Endpoints for train, test, and predict
+* Model fusion
+* Support for additional datasets
+* The code also includes other improvements and additions that will be detailed later
 
 # Predicting Prosodic Prominence from Text with Pre-Trained Contextualized Word Representations
 

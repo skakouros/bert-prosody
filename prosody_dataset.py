@@ -12,15 +12,15 @@ from pathlib import Path
 
 
 class Dataset(data.Dataset):
-    def __init__(self, tagged_sents, tag2index, pos2index, config, word_to_embid=None):
+    def __init__(self, tagged_sents, tag2index, pos2index, config, word_to_embid=None, desc=None):
         sents, tags_li, values_li, pos_li = [], [], [], [] # list of lists
         self.config = config
 
-        for sent in tqdm(tagged_sents):
+        for sent in tqdm(tagged_sents, desc="Dataset" if desc is None else desc):
             words = [word_tag[0] for word_tag in sent]
             tags = [word_tag[1] for word_tag in sent]
             values = [word_tag[3] for word_tag in sent] #+++HANDE
-            pos = [word_tag[5] for word_tag in sent] if config.use_pos else []
+            pos = [word_tag[5] for word_tag in sent] if config.use_pos else [0 for _ in sent]
 
             if self.config.model != 'LSTM' and self.config.model != 'BiLSTM':
                 sents.append(["[CLS]"] + words + ["[SEP]"])
@@ -47,6 +47,7 @@ class Dataset(data.Dataset):
         self.tag2index = tag2index
         self.word_to_embid = word_to_embid
         self.pos2index = pos2index
+        #import pdb;pdb.set_trace()
 
     def __len__(self):
         return len(self.sents)
@@ -74,7 +75,7 @@ class Dataset(data.Dataset):
             t = [t] + ["<pad>"] * (len(tokens) - 1)  # <PAD>: no decision
             yy = [self.tag2index[each] for each in t]  # (T,)
             p = [p] + ["<pad>"] * (len(tokens) - 1)  # <PAD>: no decision
-            kk = [self.pos2index[each] for each in p] if self.config.use_pos else [] # (T,)
+            kk = [self.pos2index[each] for each in p] if self.config.use_pos else [0 for _ in p] # (T,)
 
             head = [1] + [0]*(len(tokens) - 1) # identify the main piece of each word
 
@@ -205,8 +206,8 @@ def load_dataset(config):
 
     # update tag lists
     tags = list(set(word_tag[1] for sent in all_sents for word_tag in sent))
-    tags = ["<pad>"] + tags
-    pos_tag_list_coarse = list(set(word_tag[5] for sent in all_sents for word_tag in sent))
+    tags = ["<pad>"] + sorted(tags)
+    pos_tag_list_coarse = list(set(word_tag[5] for sent in all_sents for word_tag in sent)) if config.use_pos else pos_tag_list_coarse
     pos_tag_list_coarse = ["<pad>"] + sorted(pos_tag_list_coarse)
     pos_tag_list_fine = ["<pad>"] + sorted(pos_tag_list_fine)
 
@@ -239,7 +240,9 @@ def pad(batch):
     seqlens = f(5)
     maxlen = np.array(seqlens).max()
     invalid_set_to = f(9)[0]
-    import pdb;pdb.set_trace()
+    #import pdb;pdb.set_trace()
+    #print(pos)
+    #time.sleep(10)
     f = lambda x, seqlen: [sample[x] + [0] * (seqlen - len(sample[x])) for sample in batch] # 0: <pad>
     x = f(1, maxlen)
     y = f(4, maxlen)

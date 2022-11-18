@@ -1,4 +1,6 @@
 torch>=1.0
 argparse
-pytorch_transformers
+transformers
 numpy
+numpy
+tqdm

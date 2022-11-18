@@ -1,12 +1,13 @@
 from pathlib import Path
 import pandas as pd
 from ast import literal_eval
-from typing import List, Tuple
+from typing import List, Tuple, Iterable
 import numpy as np
 from itertools import islice
+import re
 
 
-def chunk(it, size):
+def chunk(it: Iterable = None, size: int = None) -> Iterable:
     it = iter(it)
     return list(iter(lambda: tuple(islice(it, size)), ()))
 
@@ -18,9 +19,11 @@ def split_punctuation(utterance: List[str], prominence: List[str], duration: Lis
     utts, proms, durs = [], [], []
     punc_checker = lambda w: [p for p in puncs if p in w]
     prom_offset = 0  # this is the label offset for prominence tags
+    pattern = r"[\([{})\]]"  # regexp pattern to remove any type of brackets in the input
 
     # iterate
     for w, p, d in zip(utterance, prominence, duration):
+        w = re.sub(pattern, '', w)
         has_punc = punc_checker(w)
         if len(has_punc) > 0:
             parts = w.split(has_punc[0])
@@ -44,7 +47,8 @@ def split_punctuation(utterance: List[str], prominence: List[str], duration: Lis
     return utts, proms, durs
 
 
-def convert_burnc(filename: str = None, new_suffix: str = '.txt', split: bool = False, seed: int = 444) -> None:
+def convert_burnc(filename: str = None, new_suffix: str = '.txt', split: bool = True, seed: int = 444,
+                  chunk_size: int = 2) -> None:
     # init
     np.random.seed(seed)
 
@@ -66,6 +70,8 @@ def convert_burnc(filename: str = None, new_suffix: str = '.txt', split: bool = 
     splits = {y: x.reset_index() for x, y in
               zip(np.split(df.sample(frac=1, random_state=seed), [int(.85 * len(df)), int(.95 * len(df))]),
                   split_names)} if split else {}
+    where = lambda wlist, idx: [jj for jj, w in enumerate(wlist) if idx == w]
+    wslice = lambda wlist, idxs: [wlist[0 if jj == 0 else idxs[jj - 1] + 1:idx + 1] for jj, idx in enumerate(idxs)]
 
     # process file(s)
     output_files = [Path(filename).with_suffix(new_suffix)] if not split else [f(filename, x) for x in split_names]
@@ -73,21 +79,40 @@ def convert_burnc(filename: str = None, new_suffix: str = '.txt', split: bool = 
         with open(output_file, 'w') as fn:
             cdf = df if not split else splits[Path(output_file).stem]
             for ii in cdf.index:
-                words = literal_eval(cdf.loc[ii, 'word'])
-                prominence = literal_eval(cdf.loc[ii, 'prominence'])
-                pos = literal_eval(cdf.loc[ii, 'pos'])
-                duration = literal_eval(cdf.loc[ii, 'duration'])
-                fname = Path(cdf.loc[ii, 'textgrid_path']).name
-                speaker = cdf.loc[ii, 'speaker']
-                # update with punctuations
+                # read row
+                fname, speaker = Path(cdf.loc[ii, 'textgrid_path']).name, cdf.loc[ii, 'speaker']
+                words, prominence, duration, pos = literal_eval(cdf.loc[ii, 'word']), literal_eval(
+                    cdf.loc[ii, 'prominence']), literal_eval(cdf.loc[ii, 'duration']), literal_eval(cdf.loc[ii, 'pos'])
+                # update with punctuations and clear any unwanted punctuation marks
                 words, prominence, duration = split_punctuation(words, prominence, duration)
-                # write to file
-                header_writer(fn, fname)
-                rows_writer(fn, words, prominence, duration)
+                if chunk_size is None:
+                    # write to file
+                    header_writer(fn, fname)
+                    rows_writer(fn, words, prominence, duration)
+                else:
+                    # determine if row has more than one sentences
+                    idxs = where(words, '.')
+                    if len(idxs) > 1 and len(idxs) > chunk_size:
+                        words_li, prominence_li, duration_li, pos_li = wslice(words, idxs), wslice(prominence, idxs), \
+                                                                       wslice(duration, idxs), wslice(pos, idxs)
+                        words_li, prominence_li, duration_li, pos_li = chunk(words_li, chunk_size), \
+                                                                       chunk(prominence_li, chunk_size), \
+                                                                       chunk(duration_li, chunk_size), \
+                                                                       chunk(pos_li, chunk_size)
+                        for i, (words, prominence, duration) in enumerate(
+                                zip(words_li, prominence_li, duration_li)):
+                            # write to file
+                            header_writer(fn, fname + f'.S{i}')
+                            for w, p, d in zip(words, prominence, duration):
+                                rows_writer(fn, w, p, d)
+                    else:
+                        # write to file
+                        header_writer(fn, fname)
+                        rows_writer(fn, words, prominence, duration)
 
 
 def convert_swbdnxt(filename: str = None, new_suffix: str = '.txt', split: bool = True, split_speakers: bool = False,
-                        seed: int = 444, chunk_size: int = 10) -> None:
+                        seed: int = 444, chunk_size: int = 4) -> None:
     # init
     np.random.seed(seed)
 
@@ -128,7 +153,11 @@ def convert_swbdnxt(filename: str = None, new_suffix: str = '.txt', split: bool 
                             # write to file
                             header_writer(fn, fname + f'.{sid}')
                             rows_writer(fn, words, prominence, duration)
-                        else: # The chunking code below needs correction
+                        else:
+                            # TODO: The chunking code below needs correction; currently it returns chunks of N words
+                            #  and not N sentences (this is because annotation is missing the sentence division and
+                            #  instead the entire speaker transcription has been stored as a single list without full
+                            #  stops).
                             words_li, prominence_li, duration_li = \
                                 chunk(literal_eval(cdf.loc[ii, f'{sid}_word']), chunk_size), \
                                 chunk(literal_eval(cdf.loc[ii, f'{sid}_accent']), chunk_size), \

@@ -12,7 +12,7 @@ import prosody_dataset
 from prosody_dataset import Dataset
 from prosody_dataset import load_embeddings, add_pos_to_dataset
 from model import Bert, BertLSTM, LSTM, BertRegression, LSTMRegression, WordMajority, ClassEncodings, BertAllLayers
-from argparse import ArgumentParser, BooleanOptionalAction
+from argparse import ArgumentParser, BooleanOptionalAction, Namespace
 import time
 from sklearn.metrics import precision_recall_fscore_support, classification_report
 from pprintpp import pprint as pp
@@ -23,134 +23,144 @@ from transformers import logging
 # set transformers verbosity level to error
 logging.set_verbosity_error()
 
-# init argument parser
-parser = ArgumentParser(description='Prosody prediction')
 
-parser.add_argument('--datadir',
-                    type=str,
-                    default='./data')
-parser.add_argument('--train_set',
-                    type=str,
-                    choices=['train',
-                             'train_100',
-                             'train_360'],
-                    default='train_360')
-parser.add_argument('--batch_size',
-                    type=int,
-                    default=32)
-parser.add_argument('--epochs',
-                    type=int,
-                    default=2)
-parser.add_argument('--model',
-                    type=str,
-                    choices=['BertUncased',
-                             'BertCased',
-                             'BertLSTM',
-                             'LSTM',
-                             'BiLSTM',
-                             'BertRegression',
-                             'LSTMRegression',
-                             'WordMajority',
-                             'ClassEncodings',
-                             'BertAllLayers'],
-                    default='BertUncased')
-parser.add_argument('--nclasses',
-                    type=int,
-                    default=3)
-parser.add_argument('--hidden_dim',
-                    type=int,
-                    default=600)
-parser.add_argument('--embedding_file',
-                    type=str,
-                    default='embeddings/glove.840B.300d.txt')
-parser.add_argument('--layers',
-                    type=int,
-                    default=1)
-parser.add_argument('--save_path',
-                    type=str,
-                    default='results.txt')
-parser.add_argument('--log_every',
-                    type=int,
-                    default=10)
-parser.add_argument('--learning_rate',
-                    type=float,
-                    default=0.00005)
-parser.add_argument('--weight_decay',
-                    type=float,
-                    default=0)
-parser.add_argument('--gpu',
-                    type=int,
-                    default=None)
-parser.add_argument('--fraction_of_train_data',
-                    type=float,
-                    default=1
-                    )
-parser.add_argument("--optimizer",
-                    type=str,
-                    choices=['rprop',
-                             'adadelta',
-                             'adagrad',
-                             'rmsprop',
-                             'adamax',
-                             'asgd',
-                             'adam',
-                             'sgd'],
-                    default='adam')
-parser.add_argument('--include_punctuation',
-                    action='store_false',
-                    dest='ignore_punctuation')
-parser.add_argument('--sorted_batches',
-                    action='store_true',
-                    dest='sorted_batches')
-parser.add_argument('--mask_invalid_grads',
-                    action='store_true',
-                    dest='mask_invalid_grads')
-parser.add_argument('--invalid_set_to',
-                    type=float,
-                    default=-2) # -2 = log(0.01)
-parser.add_argument('--log_values',
-                    action='store_true',
-                    dest='log_values')
-parser.add_argument('--weighted_mse',
-                    action='store_true',
-                    dest='weighted_mse')
-parser.add_argument('--shuffle_sentences',
-                    action='store_true',
-                    dest='shuffle_sentences')
-parser.add_argument('--seed',
-                    type=int,
-                    default=1234)
-parser.add_argument('--split_dir',
-                    type=str,
-                    default='libritts/with_pos')
-parser.add_argument('--exp_name',
-                    dest='exp_name',
-                    type=str,
-                    default='test_experiment')
-parser.add_argument('--use_pos',
-                    dest='use_pos',
-                    action=BooleanOptionalAction)
-parser.add_argument('--extract_pos',
-                    action=BooleanOptionalAction)
-parser.add_argument('--freeze',
-                    action=BooleanOptionalAction)
-parser.add_argument('--train',
-                    action=BooleanOptionalAction)
-parser.add_argument('--test',
-                    action=BooleanOptionalAction)
-parser.add_argument('--predict',
-                    action=BooleanOptionalAction)
-parser.add_argument('-cp',
-                    '--checkpoint',
-                    type=str,
-                    nargs='+',
-                    dest='checkpoint',
-                    default='[]')
-parser.add_argument('-cpdir',
-                    '--checkpoint_dir',
-       	       	    type=str,
-                    dest='checkpoint_dir',
-                    default='./checkpoints')
+def config_parser() -> Namespace:
+    # init argument parser
+    parser = ArgumentParser(description='Prosody prediction')
+
+    parser.add_argument('--datadir',
+                        type=str,
+                        default='./data')
+    parser.add_argument('--train_set',
+                        type=str,
+                        choices=['train',
+                                 'train_100',
+                                 'train_360'],
+                        default='train_360')
+    parser.add_argument('--batch_size',
+                        type=int,
+                        default=32)
+    parser.add_argument('--epochs',
+                        type=int,
+                        default=2)
+    parser.add_argument('--model',
+                        type=str,
+                        choices=['BertUncased',
+                                 'BertCased',
+                                 'BertLSTM',
+                                 'LSTM',
+                                 'BiLSTM',
+                                 'BertRegression',
+                                 'LSTMRegression',
+                                 'WordMajority',
+                                 'ClassEncodings',
+                                 'BertAllLayers'],
+                        default='BertUncased')
+    parser.add_argument('--nclasses',
+                        type=int,
+                        default=3)
+    parser.add_argument('--hidden_dim',
+                        type=int,
+                        default=600)
+    parser.add_argument('--embedding_file',
+                        type=str,
+                        default='embeddings/glove.840B.300d.txt')
+    parser.add_argument('--layers',
+                        type=int,
+                        default=1)
+    parser.add_argument('--save_path',
+                        type=str,
+                        default='results.txt')
+    parser.add_argument('--log_every',
+                        type=int,
+                        default=10)
+    parser.add_argument('--learning_rate',
+                        type=float,
+                        default=0.00005)
+    parser.add_argument('--weight_decay',
+                        type=float,
+                        default=0)
+    parser.add_argument('--gpu',
+                        type=int,
+                        default=None)
+    parser.add_argument('--fraction_of_train_data',
+                        type=float,
+                        default=1)
+    parser.add_argument("--optimizer",
+                        type=str,
+                        choices=['rprop',
+                                 'adadelta',
+                                 'adagrad',
+                                 'rmsprop',
+                                 'adamax',
+                                 'asgd',
+                                 'adam',
+                                 'sgd'],
+                        default='adam')
+    parser.add_argument('--include_punctuation',
+                        action='store_false',
+                        dest='ignore_punctuation')
+    parser.add_argument('--sorted_batches',
+                        action='store_true',
+                        dest='sorted_batches')
+    parser.add_argument('--mask_invalid_grads',
+                        action='store_true',
+                        dest='mask_invalid_grads')
+    parser.add_argument('--invalid_set_to',
+                        type=float,
+                        default=-2) # -2 = log(0.01)
+    parser.add_argument('--log_values',
+                        action='store_true',
+                        dest='log_values')
+    parser.add_argument('--weighted_mse',
+                        action='store_true',
+                        dest='weighted_mse')
+    parser.add_argument('--shuffle_sentences',
+                        action='store_true',
+                        dest='shuffle_sentences')
+    parser.add_argument('--seed',
+                        type=int,
+                        default=1234)
+    parser.add_argument('--split_dir',
+                        type=str,
+                        default='libritts/with_pos')
+    parser.add_argument('--exp_name',
+                        dest='exp_name',
+                        type=str,
+                        default='test_experiment')
+    parser.add_argument('--use_pos',
+                        dest='use_pos',
+                        action=BooleanOptionalAction)
+    parser.add_argument('--extract_pos',
+                        action=BooleanOptionalAction)
+    parser.add_argument('--freeze',
+                        action=BooleanOptionalAction)
+    parser.add_argument('--train',
+                        action=BooleanOptionalAction)
+    parser.add_argument('--test',
+                        action=BooleanOptionalAction)
+    parser.add_argument('--predict',
+                        action=BooleanOptionalAction)
+    parser.add_argument('--layer_weights',
+                        action=BooleanOptionalAction)
+    parser.add_argument('-cp',
+                        '--checkpoint',
+                        type=str,
+                        nargs='+',
+                        dest='checkpoint',
+                        default='[]')
+    parser.add_argument('-cpdir',
+                        '--checkpoint_dir',
+                        type=str,
+                        dest='checkpoint_dir',
+                        default='./checkpoints')
+    parser.add_argument('-ls',
+                        '--label_smoothing',
+                        type=float,
+                        dest='label_smoothing',
+                        default=0.0)
+    # parse arguments
+    return parser.parse_args()
 
 
 def make_dirs(name):
@@ -181,7 +191,7 @@ def weighted_mse_loss(input,target):
 def main():
 
     # parse arguments
-    config = parser.parse_args()
+    config = config_parser()
 
     # set seeds
     np.random.seed(config.seed)
@@ -335,8 +345,8 @@ def main():
             for epoch in range(config.epochs):
                 print("Epoch: {}".format(epoch+1))
                 train(model, train_iter, optimizer, criterion, device, config)
-                valid(model, dev_iter, criterion, index_to_tag, device, config, best_dev_acc, best_dev_epoch, epoch+1)
-            test(model, test_iter, criterion, index_to_tag, device, config)
+                valid(model, dev_iter, criterion, index_to_tag if not config.use_pos else index2pos, device, config, best_dev_acc, best_dev_epoch, epoch+1)
+            test(model, test_iter, criterion, index_to_tag if not config.use_pos else index2pos, device, config)
 
         # print training time
         m, s = divmod((time.time() - training_start_time), 60)
@@ -450,7 +460,8 @@ def valid(model, iterator, criterion, index_to_tag, device, config, best_dev_acc
 
     true = []
     predictions = []
-    for words, is_main_piece, tags, y_hat in zip(Words, Is_main_piece, Tags, Y_hat):
+    # gen_pack = (x,y,z,k for x,y,z,k in zip(Words, Is_main_piece, POS if config.use_pos else Tags, Y_hat)
+    for words, is_main_piece, tags, y_hat in zip(Words, Is_main_piece, POS if config.use_pos else Tags, Y_hat):
         y_hat = [hat for head, hat in zip(is_main_piece, y_hat) if head == 1]
         preds = [index_to_tag[hat] for hat in y_hat]
 
@@ -526,7 +537,7 @@ def test(model, iterator, criterion, index_to_tag, device, config):
     predictions = []
     # gets results and save
     with open(config.save_path, 'w') as results:
-        for words, is_main_piece, tags, y_hat in zip(Words, Is_main_piece, Tags, Y_hat):
+        for words, is_main_piece, tags, y_hat in zip(Words, Is_main_piece, POS if config.use_pos else Tags, Y_hat):
             y_hat = [hat for head, hat in zip(is_main_piece, y_hat) if head == 1]
             preds = [index_to_tag[hat] for hat in y_hat]
             if config.model != 'LSTM' and config.model != 'BiLSTM':
@@ -555,7 +566,7 @@ def test(model, iterator, criterion, index_to_tag, device, config):
 
     acc = 100. * (y_true == y_pred).astype(np.int32).sum() / len(y_true)
     print(f"Test accuracy: {round(acc, 2):<5.2f}%, Test loss: {np.mean(test_losses):<.4f} after {config.epochs} epochs.\n")
-    final_snapshot_path = f"model_{config.model}_{'frozen' if config.freeze else 'finetuned'}_testacc_{round(acc, 2)}_epoch_{config.epochs}_batch_{config.batch_size}_{config.exp_name}.pt"
+    final_snapshot_path = f"model_{config.model}_{'frozen' if config.freeze else 'finetuned'}_testacc_{round(acc, 2)}_epoch_{config.epochs}_batch_{config.batch_size}_{config.exp_name}_{Path(config.split_dir).name}.pt"
 
     # print classification report
     # print(classification_report(y_true, y_pred, target_names=['no_accent','accent']))

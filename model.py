@@ -79,7 +79,7 @@ class Bert(nn.Module):
         enc = self.fc1(enc).to(self.device)
         enc = self.dropout(enc).to(self.device)
         enc = self.nl1(enc).to(self.device)
-        enc = self.attention(enc,enc,enc)[0]
+        # enc = self.attention(enc,enc,enc)[0]
         logits = self.fc2(enc).to(self.device)
         y_hat = logits.argmax(-1)
         # logits = self.fc(enc).to(self.device)
